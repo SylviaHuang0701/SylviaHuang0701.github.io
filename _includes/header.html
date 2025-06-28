@@ -1,0 +1,14 @@
+<header class="site-header">
+    <div class="header-container">
+        <div class="site-brand">
+            <h1 class="site-title">
+                <a href="{{ '/' | relative_url }}">
+                    <i class="fas fa-water"></i>
+                    {{ site.title }}
+                </a>
+            </h1>
+            <p class="site-description">{{ site.description }}</p>
+        </div>
+        {% include navigation.html %}
+    </div>
+</header>

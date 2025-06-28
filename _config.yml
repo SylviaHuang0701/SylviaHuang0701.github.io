@@ -1,4 +1,45 @@
-theme: minima
-title: 我的技术笔记
-description: 记录编程问题解决过程
+title: Sylvia的技术笔记
+description: 记录编程问题解决过程和技术学习心得
 baseurl: ""
+url: "https://sylviahuang0701.github.io"
+
+# 社交链接
+social_links:
+  - platform: github
+    user_url: "https://github.com/SylviaHuang0701"
+
+# GitHub Pages 设置
+github:
+  is_project_page: false
+  repository: SylviaHuang0701/SylviaHuang0701.github.io
+
+# 插件
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# 分页
+paginate: 5
+paginate_path: "/page/:num/"
+
+# 时区
+timezone: Asia/Shanghai
+
+# 默认布局
+defaults:
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
+      comments: true
+      share: true
+
+# 排除文件
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - .git
