@@ -1,3 +1,9 @@
+---
+title: "gin框架学习记录"
+date: 2025-06-29
+categories: [前后端]
+tags: [Gin]
+---
 # gin框架学习记录
 ## 最基础实例
 ```go
