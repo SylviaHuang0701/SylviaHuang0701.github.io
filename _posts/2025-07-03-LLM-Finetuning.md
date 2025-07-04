@@ -230,6 +230,7 @@ model = get_peft_model(model, config)
   - lora_dropout：LoRA层的dropout率，用于正则化。
 - 应用LoRA：使用get_peft_model将LoRA配置应用到模型。
 ## 分词器与数据处理
+
 ``` python
 tokenizer.pad_token_id = 0
 
