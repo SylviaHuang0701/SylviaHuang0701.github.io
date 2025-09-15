@@ -1,6 +1,6 @@
 title: Sylvia的技术笔记
 description: 记录编程问题解决过程和技术学习心得
-baseurl: "/my_blog"
+baseurl: ""
 url: "https://sylviahuang0701.github.io"
 
 # 社交链接
@@ -10,8 +10,8 @@ social_links:
 
 # GitHub Pages 设置
 github:
-  is_project_page: true
-  repository: SylviaHuang0701/my_blog
+  is_project_page: false
+  repository: SylviaHuang0701/SylviaHuang0701.github.io
 
 # 插件
 plugins:
