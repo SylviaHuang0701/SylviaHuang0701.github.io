@@ -183,3 +183,282 @@ sequenceDiagram
 | `Access-Control-Allow-Headers` | 允许的请求头 | `Content-Type, Authorization` |
 | `Access-Control-Allow-Credentials` | 是否允许发送凭证（如cookies） | `true` |
 | `Access-Control-Max-Age` | 预检请求缓存时间（秒） | `86400` |
+
+
+# Go后端与内核管理程序controller交互
+
+## `gin.Context`
+
+`gin.Context` 是 `Gin` 框架中的一个核心结构体，它在每个 HTTP 请求的处理过程中被创建，并且贯穿整个请求处理链。它主要包含以下内容：
+- 请求数据：包括请求方法、URL、头部信息、请求体等。
+- 响应数据：包括响应状态码、响应头部、响应体等。
+- 共享数据：用于存储在中间件和处理函数之间共享的数据。
+- 请求处理链的控制：提供方法来控制请求的处理流程，如 `Abort`、`Next` 等。
+`gin.Context` 的作用类似于一个“请求上下文”，它将 `HTTP` 请求的所有相关信息封装在一起，方便在不同的中间件和处理函数之间传递和共享数据。
+
+## 步骤
+### 1. 定义controller接口
+``` go
+type controller interface{
+    AddRule(ctx context.Context, rule *manager.Rule) error
+    DeleteRule(ctx context.Context, ruleID uint32) error
+	UpdateRule(ctx context.Context, rule *manager.Rule) error
+	GetRule(ctx context.Context, ruleID uint32) (*manager.Rule, error)
+	ListRules(ctx context.Context) ([]*manager.Rule, error)
+	
+	// 统计信息接口
+	GetGlobalStats(ctx context.Context) (*GlobalStats, error)
+	GetRuleStats(ctx context.Context, ruleID uint32) (*RuleStats, error)
+	GetTopIPs(ctx context.Context, limit int, sortBy string) ([]*TopIPStats, error)
+	
+	// 连接管理接口
+	GetTCPConnections(ctx context.Context, limit int) ([]*TCPConnection, error)
+	GetRuleMatches(ctx context.Context, limit int) ([]*RuleMatch, error)
+	
+	// 日志接口
+	GetLogs(ctx context.Context, level string, limit int) ([]*LogEntry, error)
+	
+	// 流量趋势接口
+	GetTrafficTrend(ctx context.Context, interval string, points int) ([]*TrafficPoint, error)
+	
+	// 系统控制接口
+	ReloadRules(ctx context.Context) error
+	GetSystemStatus(ctx context.Context) (*SystemStatus, error)
+}
+```
+### 2. 依赖注入
+``` go
+   // 集中管理服务所需的各种依赖项
+   type ServiceContext struct{
+        Config *Config //指向配置信息的指针，可能包含服务运行所需的各种配置参数
+        Controller controller.Controller // 添加 controller 接口
+   }
+
+ ```
+
+``` go
+func newServiceContext(config *Config) *ServiceContext{
+    ctrlConfig := &controller.ControllerConfig{
+        MapPath:     "/sys/fs/bpf",
+        LogLevel:    "INFO",
+        BufferSize:  1024,
+        Timeout:     30 * time.Second,
+    }
+    ctrl, err := controller.NewController(ctrlConfig)
+    if err != nil {
+        log.Printf("Warning: Failed to create controller: %v", err)
+        ctrl = nil
+    }
+
+    return &ServiceContext{
+        Config:     config,
+        Controller: ctrl,
+    }
+}
+```
+   - 接收一个指向配置信息的指针 config。
+   - 创建了一个 controller.ControllerConfig 配置对象 ctrlConfig，设置了内核态 XDP 程序所需的参数（如 BPF 文件系统路径、日志级别、缓冲区大小和超时时间）
+
+### 3. 定义`controller `中间件
+
+位于客户端和服务器的核心业务逻辑之间，用于处理请求和响应。中间件的主要目的是在请求到达最终处理程序之前或之后，执行一些通用的任务或逻辑。
+
+``` go
+//典型结构
+func middlewareFunc() gin.HandlerFunc{
+    return func(c *gin.Context){
+        // 在请求处理之前执行的逻辑
+		// ...
+
+		// 调用下一个中间件或处理函数
+		c.Next()
+
+		// 在请求处理之后执行的逻辑
+		// ...
+    }
+}
+```
+`controllerMiddleware` 是一个中间件函数，作用是在每个`HTTP `请求的上下文中创建并注入一个 `controller` 实例。这样，后续的处理函数就可以通过 `gin.Context` 访问到这个 `controller` 实例，而无需自己创建。
+
+``` go
+func controllerMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		config := &controller.ControllerConfig{
+			MapPath:     "/sys/fs/bpf",
+			LogLevel:    "INFO",
+			BufferSize:  1024,
+			Timeout:     30 * time.Second,
+		}
+
+		ctrl, err := controller.NewController(config)
+		if err != nil {
+			log.Printf("Warning: Failed to create controller in middleware: %v", err)
+			ctrl = nil
+		}
+        // 创建controller实例并注入到context
+		c.Set("controller", ctrl)
+		c.Next()
+	}
+}
+```
+## 主要改动
+
+
+
+### 2. rule.go 改动
+
+**替换的功能：**
+- `getRules()`: 从硬编码数据改为调用`controller.ListRules()`
+- `createRule()`: 添加了调用`controller.AddRule()`的逻辑
+- `deleteRule()`: 添加了调用`controller.DeleteRule()`的逻辑
+- `updateRule()`: 添加了调用`controller.UpdateRule()`的逻辑
+
+**新增的辅助函数：**
+- `getController()`: 从gin context获取controller实例
+- `getDefaultController()`: 创建默认controller实例
+- `generateRuleID()`: 生成规则ID
+- `convertServiceRuleToManagerRule()`: 转换service.Rule到manager.Rule
+- `convertManagerRuleToServiceRule()`: 转换manager.Rule到service.Rule
+
+**改动内容：**
+```go
+// 示例：getRules函数改动
+func getRules(c *gin.Context) {
+	// 从controller获取规则列表
+	ctx := c.Request.Context()
+	managerRules, err := getController(c).ListRules(ctx)
+	if err != nil {
+		log.Printf("获取规则列表失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取规则列表失败"})
+		return
+	}
+	// 转换并返回数据
+}
+```
+
+### 3. status.go 改动
+
+**替换的功能：**
+- `getGlobalStatus()`: 从硬编码数据改为调用`controller.GetGlobalStats()`
+- `getRuleMatches()`: 从硬编码数据改为调用`controller.GetRuleMatches()`
+- `getTopIPs()`: 从硬编码数据改为调用`controller.GetTopIPs()`
+- `getTCPConnections()`: 从硬编码数据改为调用`controller.GetTCPConnections()`
+
+**新增的辅助函数：**
+- `getController()`: 从gin context获取controller实例
+- `getDefaultController()`: 创建默认controller实例
+
+**改动内容：**
+```go
+// 示例：getGlobalStatus函数改动
+func getGlobalStatus(c *gin.Context) {
+	// 从controller获取全局统计
+	ctx := c.Request.Context()
+	globalStats, err := getController(c).GetGlobalStats(ctx)
+	if err != nil {
+		log.Printf("获取全局统计失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取全局统计失败"})
+		return
+	}
+	// 转换并返回数据
+}
+```
+
+## 数据转换
+
+### service.Rule ↔ manager.Rule 转换
+
+**service.Rule → manager.Rule:**
+```go
+func convertServiceRuleToManagerRule(rule *service.Rule) *manager.Rule {
+	managerRule := &manager.Rule{
+		RuleID:   rule.ID,
+		Protocol: uint8(rule.Protocol),
+	}
+	
+	// 转换动作
+	switch rule.Action {
+	case "drop":
+		managerRule.Action = dao.Drop
+	case "accept":
+		managerRule.Action = dao.Pass
+	}
+	
+	// 转换IP和端口范围
+	// ...
+	
+	return managerRule
+}
+```
+
+**manager.Rule → service.Rule:**
+```go
+func convertManagerRuleToServiceRule(rule *manager.Rule) service.Rule {
+	serviceRule := service.Rule{
+		ID:        rule.RuleID,
+		Protocol:  int(rule.Protocol),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	
+	// 转换动作
+	switch rule.Action {
+	case dao.Pass:
+		serviceRule.Action = "accept"
+	case dao.Drop:
+		serviceRule.Action = "drop"
+	}
+	
+	// 转换IP和端口范围
+	// ...
+	
+	return serviceRule
+}
+```
+
+## 错误处理
+
+所有controller调用都添加了错误处理：
+
+```go
+err := getController(c).AddRule(ctx, managerRule)
+if err != nil {
+	log.Printf("添加规则到内核失败: %v", err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "添加规则失败"})
+	return
+}
+```
+
+## 依赖关系
+
+**新增的导入：**
+```go
+import (
+	"context"
+	"log"
+	"net"
+	"github.com/gin-gonic/gin"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/wsm25/XDPTable/controller"
+	"github.com/wsm25/XDPTable/model/dao"
+	"github.com/wsm25/XDPTable/model/manager"
+	"github.com/wsm25/XDPTable/model/service"
+)
+```
+
+## 配置
+
+Controller配置在多个地方使用：
+
+```go
+config := &controller.ControllerConfig{
+	MapPath:     "/sys/fs/bpf",
+	LogLevel:    "INFO",
+	BufferSize:  1024,
+	Timeout:     30 * time.Second,
+}
+```
+

@@ -300,6 +300,61 @@ model.train()
 model.save_pretrained(ckpt_dir)
 ```
 
+## 模型输出解析
+
+
+
+### 遍历测试数据
+```python
+for data in tqdm(test_data):
+id = data['id']
+print(f"Question {id}:\n{data['prompt']}")
+```
+- 提取当前样本的 `id`，通常用于标识问题。
+- 打印问题编号和问题内容。
+
+### 数据预处理
+```python
+inputs = tokenizer(data_formulate(data), return_tensors="pt").to('cuda')
+```
+- 使用 `tokenizer` 对数据进行预处理：
+  - `data_formulate(data)`：对数据进行格式化处理，可能添加特殊标记（如 `[INST]`）。
+  - `return_tensors="pt"`：返回 PyTorch 张量格式。
+  - `.to('cuda')`：将数据移动到 GPU 上，加速计算。
+
+### 设置生成配置
+```python
+generation_config = GenerationConfig(
+    do_sample=False,
+    max_new_tokens=200,
+    pad_token_id=tokenizer.pad_token_id
+)
+```
+- 创建生成配置对象 `generation_config`：
+  - `do_sample=False`：禁用采样，使用贪心解码（greedy decoding）。
+  - `max_new_tokens=200`：限制生成文本的最大新 tokens 数为 200。
+  - `pad_token_id=tokenizer.pad_token_id`：指定填充 token 的 ID。
+
+### 生成文本
+```python
+output = model.generate(**inputs, generation_config=generation_config)
+```
+- 调用模型的 `generate` 方法生成文本：
+  - `**inputs`：传入预处理后的输入数据。
+  - `generation_config=generation_config`：传入生成配置。
+
+### 解码和处理生成的文本
+```python
+output_text = tokenizer.batch_decode(output, skip_special_tokens=True)[0].split('[/INST] ')[1]
+
+original_model_response.append(output_text)
+```
+- 使用 `tokenizer.batch_decode` 将生成的 tokens 解码为文本：
+  - `skip_special_tokens=True`：忽略特殊标记（如 `[INST]`、`[/INST]` 等）。
+  - `[0]`：获取第一个样本的生成文本。
+  - `.split('[/INST] ')[1]`：提取 `[/INST]` 后的内容，即模型生成的回答部分。
+
+
 # 测试
 ``` python
 test_data_path = ""
